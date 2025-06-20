@@ -15,21 +15,21 @@ To run the agents:
 
 1. Make sure you've installed the `smolagents` project correctly using its installation instructions.
 2. Use a Python virtual environment for isolation (recommended).
-3. Navigate to the `open_deep_research/` folder and run your agent code (e.g., `open_source_models.py` or similar).
+3. Navigate to the `open_deep_research/` folder and run your agent code (e.g., `run_agent.py` or similar).
 
 ### Example
 
-To run with the default model (Qwen/Qwen2.5-Coder-32B-Instruct):
+To run with the model "Qwen/Qwen2.5-Coder-32B-Instruct"  with the Together provider:
 
 ```bash
 cd smolagents/examples/open_deep_research/
-python open_source_models.py
+python run.py --model-id Qwen/Qwen2.5-Coder-32B-Instruct --provider together
 ```
-To specify a model:
+To run llama3 model:
 
 ```bash
 
-python open_source_models.py --model-id meta-llama/Llama-3-8B-Instruct
+python open_source_models.py --model-id meta-llama/Llama-3.3-70B-Instruct --provider hf-inference
 
 ```
 
