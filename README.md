@@ -26,44 +26,36 @@ Inspired by [`smolagents/examples/open_deep_research`](https://github.com/huggin
 - LLaMA 3
 - DeepSeek
 
-
 ### 🌐 API Keys Required
 
 To run this project, you need API keys for the following services:
 
-| Service             | Env Variable             | Notes                                  |
-|---------------------|--------------------------|----------------------------------------|
-| OpenAI              | `OPENAI_API_KEY`         | Required for tasks using OpenAI models |
-| SerpAPI             | `SERPAPI_API_KEY`        | Required for web search tasks          |
-| DeepSeek            | `DEEPSEEK_API_KEY`       | Optional, if testing with DeepSeek     |
-| Hugging Face Hub    | `HUGGINGFACEHUB_API_TOKEN` | For agent setup if using hosted models |
+| Service             | Env Variable               | Notes                                     |
+|---------------------|----------------------------|-------------------------------------------|
+| OpenAI              | `OPENAI_API_KEY`           | Required for tasks using OpenAI models    |
+| SerpAPI             | `SERPAPI_API_KEY`          | Required for web search tasks             |
+| DeepSeek            | `DEEPSEEK_API_KEY`         | Optional, if testing with DeepSeek        |
+| Hugging Face Hub    | `HUGGINGFACEHUB_API_TOKEN` | For agent setup if using hosted models    |
 
-Set these variables in a `.env` file or export them in your shell:
 
-```bash
-export OPENAI_API_KEY="your-key-here"
-export SERPAPI_API_KEY="your-key-here"
-export DEEPSEEK_API_KEY="your-key-here"
-export HUGGINGFACEHUB_API_TOKEN="your-key-here"
+## 🌍 Deployment Locations
 
-### 🌍 Deployment Locations
 To study how agent behavior and IP geolocation vary by origin, the experiments were executed from three distinct regions:
 
-Location	Environment	Purpose
-🇳🇴 Norway	Personal Mac + Remote server	Baseline capture in EU
-🇸🇬 Singapore	Cloud VM (Asia)	Compare request routing and DNS behavior
-🇺🇸 US - Iowa	Cloud VM (North America)	Observe content delivery and endpoint IPs
+| 🌐 Location       | 🖥️ Environment              | 🎯 Purpose                               |
+|------------------|-----------------------------|------------------------------------------|
+| 🇳🇴 Norway        | Personal Mac + Remote server | Baseline capture in EU                   |
+| 🇸🇬 Singapore     | Cloud VM (Asia)             | Compare request routing and DNS behavior |
+| 🇺🇸 US - Iowa     | Cloud VM (North America)    | Observe content delivery and endpoint IPs |
 
-Network captures were collected at each location using tcpdump and analyzed to study:
+At each location:
 
-
-- Agent endpoint selection and routing
-
-- Regional content delivery differences
-
-- Latency and request timing variations
-
-Each capture is saved in the captures/ directory and can be cross-compared using the analysis notebook.
+- Network traffic was captured using `tcpdump`
+- `.pcap` files were stored in the `captures/` directory
+- A Jupyter notebook was used to analyze:
+  - Agent endpoint selection and routing  
+  - Regional content delivery differences  
+  - Latency and request timing variations
 
 ## 📁 Structure
 
