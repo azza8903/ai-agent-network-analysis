@@ -19,10 +19,28 @@ To run the agents:
 
 ### Example
 
+To run with the default model (Qwen/Qwen2.5-Coder-32B-Instruct):
+
 ```bash
 cd smolagents/examples/open_deep_research/
-python main.py
+python open_source_models.py
 ```
+To specify a model:
+
+```bash
+
+python open_source_models.py --model-id meta-llama/Llama-3-8B-Instruct
+
+```
+
+Analyze the Traffic (Optional)
+If scapy is installed and you're running with root/administrator privileges, the script will:
+
+- Start a packet sniffer
+- Save results in agent_traffic.pcap
+
+You can open this file with Wireshark or analyze it with Python.
+
 
 ## 🐍 Virtual Environment Setup
 If you're using a virtual environment (recommended), here’s how to set it up:
