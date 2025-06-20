@@ -37,6 +37,14 @@ To run this project, you need API keys for the following services:
 | DeepSeek            | `DEEPSEEK_API_KEY`         | Optional, if testing with DeepSeek        |
 | Hugging Face Hub    | `HUGGINGFACEHUB_API_TOKEN` | For agent setup if using hosted models    |
 
+Set these variables in a `.env` file or export them in your shell:
+
+```bash
+export OPENAI_API_KEY="your-key-here"
+export SERPAPI_API_KEY="your-key-here"
+export DEEPSEEK_API_KEY="your-key-here"
+export HUGGINGFACEHUB_API_TOKEN="your-key-here"
+```
 
 ## 🌍 Deployment Locations
 
