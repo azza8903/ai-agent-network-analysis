@@ -23,7 +23,7 @@ from smolagents import tool
 from smolagents import (
     CodeAgent,
     ToolCallingAgent,
-    HfApiModel,
+    InferenceClientModel,
     DuckDuckGoSearchTool,
 )
 
@@ -46,7 +46,16 @@ else:
 # --- Custom Tool: Visit Webpage ---
 @tool
 def visit_webpage(url: str) -> str:
-    """Visits a webpage and returns content as Markdown."""
+    """
+    Visits a webpage at the given URL and returns its content as Markdown.
+
+    Args:
+        url (str): The URL of the webpage to visit.
+
+    Returns:
+        str: The content of the webpage converted to Markdown, or an
+             error message if the request fails.
+    """
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (compatible)'
@@ -61,9 +70,9 @@ def visit_webpage(url: str) -> str:
         return f"Unexpected error: {str(e)}"
 
 # --- Main Agent Execution ---
-def main(model_id: str):
-    print(f"\n🚀 Initializing model: {model_id}")
-    model = HfApiModel(model_id=model_id)
+def main(model_id: str, provider: str):
+    print(f"\n🚀 Initializing model: {model_id} via provider: {provider}")
+    model = InferenceClientModel(model_id=model_id, provider=provider)
 
     web_agent = ToolCallingAgent(
         tools=[DuckDuckGoSearchTool(), visit_webpage],
@@ -123,4 +132,16 @@ def main(model_id: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run a tool-using agent with optional packet capture.")
     parser.add_argument(
-        "--model
+        "--model-id",
+        type=str,
+        default="Qwen/Qwen2.5-Coder-32B-Instruct",
+        help="Hugging Face model ID to use (default: Qwen/Qwen2.5-Coder-32B-Instructt)"
+    )
+    parser.add_argument(
+        "--provider",
+        type=str,
+        default="together",
+        help="Provider to use for the model (default: together)"
+    )
+    args = parser.parse_args()
+    main(args.model_id, args.provider)
