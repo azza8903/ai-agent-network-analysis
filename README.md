@@ -46,6 +46,24 @@ export SERPAPI_API_KEY="your-key-here"
 export DEEPSEEK_API_KEY="your-key-here"
 export HUGGINGFACEHUB_API_TOKEN="your-key-here"
 
+## 🌍 Deployment Locations
+To study how agent behavior and IP geolocation vary by origin, the experiments were executed from three distinct regions:
+
+Location	Environment	Purpose
+🇳🇴 Norway	Personal Mac + Remote server	Baseline capture in EU
+🇸🇬 Singapore	Cloud VM (Asia)	Compare request routing and DNS behavior
+🇺🇸 US - Iowa	Cloud VM (North America)	Observe content delivery and endpoint IPs
+
+Network captures were collected at each location using tcpdump and analyzed to study:
+
+
+- Agent endpoint selection and routing
+
+- Regional content delivery differences
+
+- Latency and request timing variations
+
+Each capture is saved in the captures/ directory and can be cross-compared using the analysis notebook.
 
 ## 📁 Structure
 
