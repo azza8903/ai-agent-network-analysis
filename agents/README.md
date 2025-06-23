@@ -29,7 +29,7 @@ To run llama3 model:
 
 ```bash
 
-python open_source_models.py --model-id meta-llama/Llama-3.3-70B-Instruct --provider hf-inference
+python run.py --model-id meta-llama/Llama-3.3-70B-Instruct --provider hf-inference
 
 ```
 
