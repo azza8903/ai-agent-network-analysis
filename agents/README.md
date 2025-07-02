@@ -29,7 +29,7 @@ To run llama3 model:
 
 ```bash
 
-python run_agent.py --model-id meta-llama/Llama-3.3-70B-Instruct --provider hf-inference
+python run_agent.py --model-id meta-llama/Llama-3.3-70B-Instruct --provider together
 
 ```
 
