@@ -54,7 +54,7 @@ To study how agent behavior and IP geolocation vary by origin, the experiments w
 |------------------|-----------------------------|------------------------------------------|
 | 🇳🇴 Norway        | Personal Mac + Remote server | Baseline capture in EU                   |
 | 🇸🇬 Singapore     | Cloud VM (Asia)             | Compare request routing and DNS behavior |
-| 🇺🇸 US - Iowa     | Cloud VM (North America)    | Observe content delivery and endpoint IPs |
+| 🇺🇸 US - Iowa     | Cloud VM (North America): 34.68.222.176    | Observe content delivery and endpoint IPs |
 
 At each location:
 
@@ -64,6 +64,7 @@ At each location:
   - Agent endpoint selection and routing  
   - Regional content delivery differences  
   - Latency and request timing variations
+
 
 ## 📁 Structure
 
