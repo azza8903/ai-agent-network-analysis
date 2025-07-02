@@ -23,13 +23,13 @@ To run with the model "Qwen/Qwen2.5-Coder-32B-Instruct"  with the Together provi
 
 ```bash
 cd smolagents/examples/open_deep_research/
-python run.py --model-id Qwen/Qwen2.5-Coder-32B-Instruct --provider together
+python run_agent.py --model-id Qwen/Qwen2.5-Coder-32B-Instruct --provider together
 ```
 To run llama3 model:
 
 ```bash
 
-python run.py --model-id meta-llama/Llama-3.3-70B-Instruct --provider hf-inference
+python run_agent.py --model-id meta-llama/Llama-3.3-70B-Instruct --provider hf-inference
 
 ```
 
