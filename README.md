@@ -1,6 +1,11 @@
 # AI Agent Network Analysis
 
-This project investigates the network-level behavior of LLM-based AI agents using [Hugging Face's `smolagents`](https://github.com/huggingface/smolagents) framework. The focus is on how agents interact with the internet, generate network traffic, and scale in multi-agent environments.
+This project investigates the network-level behavior of LLM-based AI agents. Currently supported frameworks:
+
+- [Hugging Face's `smolagents`](https://github.com/huggingface/smolagents) 
+- [Google's `genai`](https://github.com/googleapis/python-genai)
+
+The project focuses on how agents interact with the internet, generate network traffic, and scale in multi-agent environments.
 
 ## 🔍 Project Focus
 
@@ -10,21 +15,35 @@ Inspired by [`smolagents/examples/open_deep_research`](https://github.com/huggin
 
 ## 🧪 Experiment Example
 
+Use 
+```
+python agents/run_any.py --agent smal
+python agents/run_any.py --help
+```
+
 ### Prompt
 
+The default prompt is
+```
 > "Get the current weather for London and recommend activities based on the conditions."
+```
+Use argument `--prompt "My prompt"` for another prompt
 
 ### Tools Used
 
 - [`tcpdump`](https://www.tcpdump.org/) — for capturing network packets  
 - **Jupyter Notebooks** — for traffic analysis and visualization  
 - **Hugging Face `smolagents`** — for setting up and running the agents
+- **pyshark** for pcap analysis
 
 ### AI Models Tested
 
-- Qwen
-- LLaMA 3
-- DeepSeek
+- smalagents
+  - Qwen
+  - LLaMA 3
+  - DeepSeek
+- gemini
+  - genai
 
 ### 🌐 API Keys Required
 
@@ -36,14 +55,16 @@ To run this project, you need API keys for the following services:
 | SerpAPI             | `SERPAPI_API_KEY`          | Required for web search tasks             |
 | DeepSeek            | `DEEPSEEK_API_KEY`         | Optional, if testing with DeepSeek        |
 | Hugging Face Hub    | `HUGGINGFACEHUB_API_TOKEN` | For agent setup if using hosted models    |
+| Gemini API          | `GEMINI_API_KEY`           | For Gemini                                |
 
-Set these variables in a `.env` file or export them in your shell:
+⚠️ Set these variables in a `.env` file or export them in your shell:
 
 ```bash
 export OPENAI_API_KEY="your-key-here"
 export SERPAPI_API_KEY="your-key-here"
 export DEEPSEEK_API_KEY="your-key-here"
 export HUGGINGFACEHUB_API_TOKEN="your-key-here"
+export GEMINI_API_KEY="your-key-here"
 ```
 
 ## 🌍 Deployment Locations
@@ -53,8 +74,8 @@ To study how agent behavior and IP geolocation vary by origin, the experiments w
 | 🌐 Location       | 🖥️ Environment              | 🎯 Purpose                               |
 |------------------|-----------------------------|------------------------------------------|
 | 🇳🇴 Norway        | Personal Mac + Remote server | Baseline capture in EU                   |
-| 🇸🇬 Singapore     | Cloud VM (Asia)             | Compare request routing and DNS behavior |
-| 🇺🇸 US - Iowa     | Cloud VM (North America): 34.68.222.176    | Observe content delivery and endpoint IPs |
+| 🇸🇬 Singapore     | Cloud VM (Asia, Google Cloud)           | Compare request routing and DNS behavior |
+| 🇺🇸 US - Iowa     | Cloud VM (North America, Google Cloud)  | Observe content delivery and endpoint IPs |
 
 At each location:
 
@@ -69,8 +90,16 @@ At each location:
 ## 📁 Structure
 
 - `notebooks/` — traffic analysis
-- `captures/` — `.pcap` files from tcpdump
+- `pcap/` — `.pcap` files from tcpdump
 - `agents/` — configuration or modifications to smolagents
+- `results` - where notebooks write their output
+
+### Notable files
+- `agents/run_any.py`- run an experiment with a single agent, model and prompt
+- `agents/ai_agent_manager.py` - abstract class and implementation of the AI agents
+- `notebooks/traffic_analysis.ipynb` - pcap analysis, traffic
+- `notebooks/geo_analysis.ipynb` - pcap analysis, network autonomous systems and geography
+- `notebooks/pcap_tools.py` - tools used for analysis, based on `pyshark` and [IP_API](https://ip-api.com/)
 - `README.md` — this file
 
 ## 🚧 Status

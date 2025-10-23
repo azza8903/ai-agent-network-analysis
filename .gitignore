@@ -1,0 +1,6 @@
+.DS_store
+testing
+.env
+.HF_token.txt
+*__pycache__*
+*pdf
