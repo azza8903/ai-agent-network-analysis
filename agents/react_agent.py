@@ -1,7 +1,7 @@
 """
 ReAct Agent — clean compatibility build with Google Search + live weather
 - Works on Python 3.10–3.13
-- Supports modern LangChain (≥0.2) and falls back to legacy (<0.2)
+- Supports modern LangChain (≥1.1)
 - Tools included:  optional Google (SerpAPI), optional DuckDuckGo, optional Wikipedia, and `weather_now` (Open‑Meteo, no API key)
 - Backends supported: OpenAI (ChatGPT), Gemini (Google AI Studio), DeepSeek, LLama
 """
@@ -9,19 +9,24 @@ ReAct Agent — clean compatibility build with Google Search + live weather
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional
-from huggingface_hub import InferenceClient
 import unicodedata 
 import re
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain_deepseek import ChatDeepSeek
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 
 import requests
 from dotenv import load_dotenv
+
+from langchain.agents import create_agent
+from langchain.tools import tool
+from dataclasses import dataclass
+from langchain.agents.structured_output import ToolStrategy
 
 try:
     import scapy.all as scapy
@@ -33,26 +38,10 @@ except (ImportError, OSError) as e:
     SCAPY_AVAILABLE = False
     PCAP_DIR = "./pcap/react/"
 
-# -----------------------------
-# LLM backends (OpenAI, Gemini)
-# -----------------------------
-try:
-    from langchain_openai import ChatOpenAI
-except Exception:
-    from langchain.chat_models import ChatOpenAI  # type: ignore
-
-try:
-    from langchain_google_genai import ChatGoogleGenerativeAI  # pip install langchain-google-genai google-generativeai
-except Exception:
-    ChatGoogleGenerativeAI = None  # type: ignore
 
 # -----------------------------
 # Agent APIs 
 # -----------------------------
-from langchain.agents import create_react_agent, AgentExecutor
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.tools import Tool
-
 
 
 def _clean_city(s: str) -> str:
@@ -66,6 +55,7 @@ def _clean_city(s: str) -> str:
     s = s.replace(", U.K.", ", United Kingdom")
     return s
 
+@tool
 def weather_now(city: str) -> str:
     """Fetch current weather for a city using Open-Meteo (no API key)."""
     try:
@@ -114,209 +104,92 @@ def weather_now(city: str) -> str:
     except Exception as e:
         return f"Weather error: {e}"
 
-def build_tools() -> List[Tool]:
+
+@tool
+def get_local_city_by_ip() -> str:
+    """Fetch the location (city, country) where the agent is running by resolving the local IP address using ip-api.com (no API key)."""
+    try:
+        response = requests.get(f"http://ip-api.com/json/", timeout=5)
+        data = response.json()
+        result_city = data.get("city", "")
+        result_country = data.get("country", "")
+        return f"The local IP address is located in {result_city}, {result_country}."
+    except Exception as e:
+        return f"IP location lookup error: {e}"  # fallback if the request fails
+
+def build_tools() -> List[Any]:
     return [
-        Tool(name="weather_now", func=weather_now, description="Get current weather for a city, e.g., 'London'"),
+        #Tool(name="weather_now", func=weather_now, description="Get current weather for a city, e.g., 'London'"),
+        weather_now,
+        get_local_city_by_ip,
     ]
 
+# Define response format
+@dataclass
+class ResponseFormat:
+    """Response schema for the agent."""
+    descriptive_response: str
+    # Any interesting information about the weather if available
+    weather_conditions: str | None = None
 
-# ---------------------------------------------------------
-# LLAMA (Hugging Face Inference API)
-# ---------------------------------------------------------
-# --- HF Wrapper for LLaMA (Hugging Face Inference API) ---
-from typing import Any, List
-from langchain_core.messages import (
-    BaseMessage, HumanMessage, SystemMessage, AIMessage
-)
-
-
-from typing import Any, List
-from langchain_core.messages import (
-    BaseMessage, HumanMessage, SystemMessage, AIMessage
-)
-
-class HFLLMWrapper:
-    """
-    Wrapper so HF models behave like LangChain chat models.
-    """
-
-    def __init__(self, client, model_name: str, temperature: float = 0.0):
-        self.client = client
-        self.model_name = model_name
-        self.temperature = temperature
-
-    def _messages_to_prompt(self, messages: List[Any]) -> str:
-        """Convert LangChain messages (or tuples) → text prompt."""
-        parts = []
-        for m in messages:
-            # Normal LangChain message types
-            if isinstance(m, SystemMessage):
-                parts.append(f"<system>\n{m.content}\n</system>")
-            elif isinstance(m, HumanMessage):
-                parts.append(f"<human>\n{m.content}\n</human>")
-            elif isinstance(m, AIMessage):
-                parts.append(f"<assistant>\n{m.content}\n</assistant>")
-
-            # Sometimes LangChain passes ('human', 'text') or similar
-            elif isinstance(m, tuple) and len(m) == 2:
-                role, content = m
-                role = str(role).lower()
-                if role in ("human", "user"):
-                    parts.append(f"<human>\n{content}\n</human>")
-                elif role in ("assistant", "ai"):
-                    parts.append(f"<assistant>\n{content}\n</assistant>")
-                elif role == "system":
-                    parts.append(f"<system>\n{content}\n</system>")
-                else:
-                    parts.append(str(m))
-
-            else:
-                # Fallback: just stringize whatever this object is
-                parts.append(str(m))
-
-        return "\n".join(parts)
-
-    def invoke(self, messages: List[Any], **kwargs: Any) -> AIMessage:
-        prompt = self._messages_to_prompt(messages)
-
-        resp = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=512,
-            temperature=self.temperature,
-        )
-
-        out = resp.choices[0].message["content"]
-        return AIMessage(content=out)
-
-    # LangChain compatibility — allow llm(messages)
-    def __call__(self, messages: List[Any], **kwargs):
-        return self.invoke(messages, **kwargs)
-
-    # Critical: allow create_react_agent() to call llm.bind(...)
-    def bind(self, **kwargs):
-        # You can store/use kwargs if you want, but returning self is enough here.
-        return self
-
-
-
-def load_llama(model_name: str, temperature: float = 0.2):
-    """
-    Loads a LLaMA model from HuggingFace using the Inference API.
-    This returns a LangChain-compatible LLM wrapper.
-    """
-
-    hf_key = os.getenv("HF_API_KEY")
-    if not hf_key:
-        raise ValueError("HF_API_KEY is not set!")
-
-    # Hugging Face inference client
-    client = InferenceClient(
-        model=model_name,
-        token=hf_key,
-    )
-
-    # LangChain wrapper – unify with your existing architecture
-    class HFLLMWrapper:
-        def __init__(self, client, model_name, temperature):
-            self.client = client
-            self.model_name = model_name
-            self.temperature = temperature
-
-        def invoke(self, messages, **kwargs):
-            # Convert messages → chat format
-            prompt = ""
-            for m in messages:
-                if m.type == "system":
-                    prompt += f"<system>{m.content}</system>\n"
-                elif m.type == "human":
-                    prompt += f"<human>{m.content}</human>\n"
-                elif m.type == "assistant":
-                    prompt += f"<assistant>{m.content}</assistant>\n"
-
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=500,
-                temperature=self.temperature,
-                stream=False
-            )
-
-            return response.choices[0].message["content"]
-
-    return HFLLMWrapper(client, model_name, temperature)
 
 # -----------------------------
 # LLM Builder
 # -----------------------------
-def build_llm(model: Optional[str] = None, temperature: float = 0.0, backend: str = "openai"):
+def build_llm(model: Optional[str] = None, temperature: float = 0.0, max_execution_time: int = 60, backend: str = "openai"):
     backend = (backend or "openai").lower()
 
     if backend == "openai":
         name = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("OPENAI_API_KEY is not set.")
-        return ChatOpenAI(model=name, temperature=temperature)
+        return ChatOpenAI(
+            model=name, 
+            timeout=max_execution_time,
+            temperature=temperature
+        )
 
     elif backend == "gemini":
         # your working Gemini builder here (no convert_system_message_to_human)
-        name = model or os.getenv("GEMINI_MODEL")
-        return _make_gemini_llm(name, temperature)
+        name = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        if not os.getenv("GEMINI_API_KEY"):
+            raise RuntimeError("Set GEMINI_API_KEY for --backend gemini.")
+
+        return ChatGoogleGenerativeAI(
+            model=name,
+            temperature=temperature,
+            max_tokens=None,
+            timeout=max_execution_time,
+            max_retries=2
+        )
 
     elif backend == "deepseek":
-        # DeepSeek is OpenAI-compatible; just change base_url + key.
         api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("Set DEEPSEEK_API_KEY for --backend deepseek.")
-        base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        name = model or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")  # or "deepseek-reasoner"
-        # Note: Some deployments use /v1; both usually work:
-        return ChatOpenAI(model=name, temperature=temperature, api_key=api_key, base_url=base_url)
+        name = model or os.getenv("DEEPSEEK_MODEL", "deepseek-chat")  # or "deepseek-reasoner" , "deepseek-coder", etc.
+        return ChatDeepSeek(
+            model=name, 
+            timeout=max_execution_time,
+            temperature=temperature
+        )
 
-    elif backend == "llama":
-        from huggingface_hub import InferenceClient
-        hf_key = os.getenv("HF_API_KEY")
-        if not hf_key:
-            raise RuntimeError("Set HF_API_KEY for --backend llama.")
-        client = InferenceClient(model=model, token=hf_key)
-        return HFLLMWrapper(client, model_name=model, temperature=temperature)
+    elif backend == "ollama":
+        # groq_api_key = os.environ.get("GROQ_API_KEY")
+        # if not groq_api_key:
+        #     raise RuntimeError("Please set the GROQ_API_KEY environment variable.")
+
+        return ChatOllama(
+            model=model or "llama3.1", # Others tested "qwen3:8b", "mistral"
+            temperature=temperature,
+            validate_model_on_init=True,
+            num_predict=256,
+            max_retries=2,
+            timeout=max_execution_time,
+        )
     
     else:
         raise ValueError(f"Unsupported backend: {backend}")
-
-
-
-def _make_gemini_llm(requested: Optional[str], temperature: float):
-    """
-    Robust Gemini constructor: try a list of known IDs and fall back until one works.
-    Handles per-account availability differences that cause 404s.
-    """
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    candidates = [c for c in [
-        requested,
-        os.getenv("GEMINI_MODEL"),
-        # Prefer newest names first; keep a few older fallbacks:
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-pro-latest",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b",
-        "gemini-1.5-pro",
-        "gemini-1.0-pro",
-    ] if c]
-
-    last_err = None
-    for mid in candidates:
-        try:
-            return ChatGoogleGenerativeAI(model=mid, temperature=temperature)
-        except Exception as e:
-            # If it's a NotFound / 404, try next candidate
-            last_err = e
-            continue
-    raise RuntimeError(
-        "No Gemini model from the candidate list is available for this API key. "
-        "Try setting --model explicitly to one returned by your account’s ListModels."
-    ) from last_err
-
 
 
 # -----------------------------
@@ -325,47 +198,105 @@ def _make_gemini_llm(requested: Optional[str], temperature: float):
 
 def build_agent(llm, tools, backend: str = "openai"):
     # Force the LLM to stop right after a tool call so the parser can insert Observation:
-    llm_for_agent = llm.bind(stop=["\nObservation:"])
-
+    #llm_for_agent = llm.bind(stop=["\nObservation:"])
+    
     # Gemini crashes if we add a second SystemMessage later in the chat.
     # Use HUMAN scratchpad for Gemini; SYSTEM scratchpad for OpenAI.
     scratchpad_role = "human" if backend.lower() == "gemini" else "system"
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system",
-         "You are a helpful AI that can use tools.\n"
-         "Available tools:\n{tools}\n"
-         "You may call tools from this set: {tool_names}.\n"
-         "Follow ReAct strictly. Valid prefixes: Thought:, Action:, Action Input:, Observation:, Final Answer:\n"
-         "\n"
-         "TOOL-CALL FORMAT (exactly, no extra words):\n"
-         "Action: <tool_name>\n"
-         "Action Input: \"<JSON-serializable string>\"\n"
-         "Then STOP and wait for Observation.\n"
-         "After Observation, finish with:\n"
-         "Final Answer: <your answer>\n"
-        ),
-        ("human", "{input}"),
-        (scratchpad_role, "{agent_scratchpad}"),
-    ])
+    # prompt = ChatPromptTemplate.from_messages([
+    #     ("system",
+    #      "You are a helpful AI that can use tools.\n"
+    #      "Available tools:\n{tools}\n"
+    #      "You may call tools from this set: {tool_names}.\n"
+    #      "Follow ReAct strictly. Valid prefixes: Thought:, Action:, Action Input:, Observation:, Final Answer:\n"
+    #      "\n"
+    #      "TOOL-CALL FORMAT (exactly, no extra words):\n"
+    #      "Action: <tool_name>\n"
+    #      "Action Input: \"<JSON-serializable string>\"\n"
+    #      "Then STOP and wait for Observation.\n"
+    #      "After Observation, finish with:\n"
+    #      "Final Answer: <your answer>\n"
+    #     ),
+    #     ("human", "{input}"),
+    #     (scratchpad_role, "{agent_scratchpad}"),
+    # ])
 
-    runnable = create_react_agent(llm_for_agent, tools, prompt)
-    return AgentExecutor(
-        agent=runnable,
+    # Expand tools into a human-readable list for the system prompt
+    tool_entries: List[str] = []
+    tool_names: List[str] = []
+    for t in tools:
+        # LangChain Tool objects typically have .name and .description; fallback to function attributes
+        name = getattr(t, "name", None) or getattr(t, "__name__", None) or str(t)
+        desc = getattr(t, "description", None) or getattr(t, "__doc__", None) or ""
+        name = str(name)
+        desc = str(desc).strip()
+        tool_entries.append(f"{name}: {desc}" if desc else f"{name}")
+        tool_names.append(name)
+
+    tools_text = "\n".join(f"  - {entry}" for entry in tool_entries) if tool_entries else "  (no tools available)"
+    tool_names_text = ", ".join(tool_names) if tool_names else "(none)"
+
+    SYSTEM_PROMPT = f"""You are a helpful AI that can use tools.
+        Available tools:
+        {tools}
+        Always use the tools to complete the described action. Follow ReAct strictly.
+        """
+        # If no city name is provided in the prompt, use 'get_local_city_by_ip' to find out the city and country where you are running.
+        # Always use 'weather_now' to get the current weather. 
+        # Follow ReAct strictly.
+        # You may call tools from this set: {tool_names_text}.
+        # Follow ReAct strictly. Valid prefixes: Thought:, Action:, Action Input:, Observation:, Final Answer:
+
+        # TOOL-CALL FORMAT (exactly, no extra words):
+        # Action: <tool_name>
+        # Action Input: \"<JSON-serializable string>\"
+        # Then STOP and wait for Observation.
+        # After Observation, finish with:
+        # Final Answer: <your answer>
+    #print(SYSTEM_PROMPT)
+
+    agent = create_agent(
+        model=llm,
+        system_prompt=SYSTEM_PROMPT,
         tools=tools,
-        verbose=True,
-        max_iterations=20,
-        max_execution_time=120,
-        handle_parsing_errors=True,
+        response_format=ToolStrategy(ResponseFormat),
     )
+    return agent
 
+
+from langchain_core.messages import AIMessage
+def extract_final_ai_message(messages):
+    """
+    Given a list of LangChain message objects, return the content
+    of the last AIMessage that contains non-empty content.
+    """
+    final_message = None
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
+            final_message = msg.content.strip()
+    return final_message  # or raise an error if desired
 
 # -----------------------------
 # Execution
 # -----------------------------
-def run_query(agent, prompt: str) -> str:
-    out = agent.invoke({"input": prompt})
-    return out.get("output") if isinstance(out, dict) else str(out)
+def run_query(agent, prompt: str, max_execution_time: int) -> str:
+    _config = {
+    "timeout": str(max_execution_time),  # Timeout in seconds
+}
+    response = agent.invoke(
+        {"messages": [{"role": "user", "content": prompt}]},
+        #config=_config,
+    )
+    #out = response.get("messages") if isinstance(response, dict) else str(response)
+    out = None
+    try:
+        # This works on standard LangChain models like OpenAI/Gemini
+        out = response["structured_response"] 
+    except Exception as e:
+        # Desperate fallback: try to extract the final AI message content
+        out = str(extract_final_ai_message(response.get("messages", []))) or str(response)
+    return out
 
 # -----------------------------
 # CLI
@@ -373,11 +304,12 @@ def run_query(agent, prompt: str) -> str:
 def main():
     load_dotenv()
     parser = argparse.ArgumentParser(description="ReAct Agent — Google Search + live weather (OpenAI/Gemini)")
-    parser.add_argument("prompt", type=str)
+    parser.add_argument("--prompt", type=str, default="What is the current weather in London, UK?")
     parser.add_argument("--model", type=str, default=None)
     parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--max_execution_time", type=int, default=60)
     parser.add_argument("--backend", type=str, default="openai",
-                    choices=["openai", "gemini", "deepseek", "llama"],
+                    choices=["openai", "gemini", "deepseek", "ollama"],
                     help="LLM backend")
     parser.add_argument("--no-wikipedia", action="store_true")
     parser.add_argument("--ddg", action="store_true")
@@ -410,15 +342,15 @@ def main():
     logger = None
 
     try:
-        tools = build_tools()
-        llm = build_llm(model=args.model, temperature=args.temperature, backend=args.backend)
-        agent = build_agent(llm, tools, backend=args.backend)
-
         print("\n=== ReAct Agent Run ===")
+        print("Start Time:", datetime.now(timezone.utc).astimezone().isoformat())
         print(f"Prompt: {args.prompt}\n")
-        output = run_query(agent, args.prompt)
+        print(f"Using backend: {args.backend}, model: {args.model or 'default'}, temperature: {args.temperature}")
+        output = run_query(agent, args.prompt, args.max_execution_time)
         print("\n--- Agent Output ---\n")
         print(output)
+        print("\n=== End of Run ===")
+        print("End Time:", datetime.now(timezone.utc).astimezone().isoformat()) 
         
     finally:
          # ---------- Stop & save PCAP ----------
