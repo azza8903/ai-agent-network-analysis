@@ -1,19 +1,14 @@
-react_agent.py
+# agents
+
+Home of the `react_agent.py`
+
 
 Multi-Backend ReAct Agent with Network Instrumentation
-OpenAI • Gemini • DeepSeek • LLaMA (Hugging Face) • Weather Tool • SerpAPI • PCAP Capture (Scapy)
+OpenAI • Gemini • DeepSeek • Ollama (Llama, Qwen, Mistral) • Weather Tool • SerpAPI • PCAP Capture (Scapy)
 
-This code provides a fully instrumented ReAct-style Tool-Using Agent supporting multiple LLM backends:
+This code provides a fully instrumented ReAct-style Tool-Using Agent supporting multiple LLM backends.
 
-- OpenAI (GPT-4o, GPT-4o-mini, etc.)
-
-- Google Gemini (v1.5, v2.0, v2.5)
-
-- DeepSeek via OpenAI API compatibility
-
-= HuggingFace Inference API (Meta-LLaMA, Mistral, Qwen, etc.)
-
-It includes:
+## LLMs
 
 - ReAct reasoning (Thought → Action → Observation → Answer)
 - Built-in tools: weather_now (Open-Meteo, no API key required)-
@@ -23,6 +18,30 @@ It includes:
 ✔️ Automatic logs (events.jsonl, summary.jsonl)
 ✔️ Works on Python 3.10–3.13
 
+## Running
+
+You can run simply as
+```
+python react_agent.py --backend=gemini --temperature=0.5 --prompt="What is the weather in my place?"
+```
+Try
+```
+python react_agent.py --help
+```
+for the list of features.
+
+### Docker
+
+The agent will pick up all network trafic at the host, for as long as scapy is recording, including background e-mail activity etc.  It is therefore better to run from Docker:
+
+```
+docker build -t react-agent .
+docker run --rm -e GEMINI_API_KEY=<my_AI_key> -v "$(pwd)/pcap:/app/pcap" react-agent --prompt="What is the weather forecast in London, UK?" --backend=gemini
+```
+
+
+## Features
+
 1. Multi-Model Backend Support
 
 Switch between LLM providers with a simple flag:
@@ -30,7 +49,7 @@ Switch between LLM providers with a simple flag:
 --backend openai     # OpenAI ChatCompletions API
 --backend gemini     # Google Generative Language API
 --backend deepseek   # DeepSeek OpenAI-compatible API
---backend llama      # HuggingFace Inference API
+--backend ollama      # HuggingFace Inference API
 
 2. Create and activate environment
 python3 -m venv react_env
