@@ -175,12 +175,28 @@ def build_llm(model: Optional[str] = None, temperature: float = 0.0, max_executi
         )
 
     elif backend == "ollama":
-        # groq_api_key = os.environ.get("GROQ_API_KEY")
-        # if not groq_api_key:
-        #     raise RuntimeError("Please set the GROQ_API_KEY environment variable.")
+        def get_active_ollama_url():
+            candidate_urls = [
+            "http://localhost:11434",           # Inside container? No, use host.docker.internal
+            "http://host.docker.internal:11434", # Docker Desktop (Mac/Windows/Linux 20.10+)
+            "http://host-gateway:11434",         # Linux Docker 20.10+
+            "http://172.17.0.1:11434"           # Docker bridge gateway (fallback)
+            ]
+            
+            for url in candidate_urls:
+                try:
+                    response = requests.head(f"{url}/api/tags", timeout=3)
+                    if response.status_code == 200:
+                        print(f"Ollama active at: {url}")
+                        return url
+                except requests.RequestException:
+                    continue
+            
+            raise ConnectionError("No active Ollama server found")
 
         return ChatOllama(
             model=model or "llama3.1", # Others tested "qwen3:8b", "mistral"
+            base_url = get_active_ollama_url(),
             temperature=temperature,
             validate_model_on_init=True,
             num_predict=256,
@@ -307,7 +323,8 @@ def main():
     parser.add_argument("--prompt", type=str, default="What is the current weather in London, UK?")
     parser.add_argument("--model", type=str, default=None)
     parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--max_execution_time", type=int, default=60)
+    parser.add_argument("--max-execution-time", type=int, default=60)
+    parser.add_argument("--pcap-dir", type=str, default=PCAP_DIR, help="Directory to save PCAP files")
     parser.add_argument("--backend", type=str, default="openai",
                     choices=["openai", "gemini", "deepseek", "ollama"],
                     help="LLM backend")
@@ -363,7 +380,7 @@ def main():
                 model = args.model or "default"
                 safe_model = re.sub(r"[^A-Za-z0-9_.-]", "_", model)
                 pcap_filename = os.path.join(
-                    PCAP_DIR, f"{backend}-{safe_model}-{ts}.pcap"
+                    args.pcap_dir, f"{backend}-{safe_model}-{ts}.pcap"
                 )
                 scapy.wrpcap(pcap_filename, sniffer.results)
                 print(f" Packets saved to '{pcap_filename}'")
