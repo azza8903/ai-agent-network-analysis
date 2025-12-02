@@ -38,7 +38,18 @@ The agent will pick up all network trafic at the host, for as long as scapy is r
 docker build -t react-agent .
 docker run --rm -e GEMINI_API_KEY=<my_AI_key> -v "$(pwd)/pcap:/app/pcap" react-agent --prompt="What is the weather forecast in London, UK?" --backend=gemini
 ```
+### Pcap Analysis
 
+1) Packet count burst plot
+2) Transfer volume plot (KB)
+
+To plot those plots you pass the pcap file and the client ip address
+
+For example
+```
+python pcap_analysis.py ./pcap/react/openai-gpt-4o-mini-20251125-123406.pcap 10.47.9.55
+
+```
 
 ## Features
 
