@@ -4,4 +4,6 @@ testing
 .HF_token.txt
 *__pycache__*
 *pdf
+*png
 pcap
+output

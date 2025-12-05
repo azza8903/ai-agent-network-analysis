@@ -230,9 +230,11 @@ def plot_transfer_volume(times, kb_in, kb_out, title="Transfer Volume Over Time 
 def main():
     parser = argparse.ArgumentParser(description="Analyze LLM agent PCAP patterns")
     parser.add_argument("pcap", type=str, help="Path to input pcap file")
-    parser.add_argument("client_ip", type=str, help="Client IP in the capture")
+    parser.add_argument("--client_ip", type=str, default="172.17.0.2", help="Client IP in the capture")
 
     args = parser.parse_args()
+
+    #args.pcap = "experiments/pcap/run-ollama-models/ollama-mistral-20251203-101258.pcap"
 
     debug_client_ip_matches(args.pcap, args.client_ip)
 

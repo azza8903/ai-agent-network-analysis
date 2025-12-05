@@ -47,7 +47,7 @@ def purify_traffic(pcap_df):
     # Filter for TCP and QUIC traffic on ports 80 and 443
     filtered_df = pcap_df[
         ((pcap_df['protocol'] == 'TCP') | (pcap_df['protocol'] == 'UDP') | (pcap_df['protocol'] == 'QUIC')) &
-        ((pcap_df['source_port'].isin([80, 443])) | (pcap_df['destination_port'].isin([80, 443])))
+        ((pcap_df['source_port'].isin([80, 443, 11434])) | (pcap_df['destination_port'].isin([80, 443, 11434])))   
     ]
     return filtered_df
 
