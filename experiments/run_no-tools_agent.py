@@ -9,7 +9,7 @@ import json
 
 env_map = dotenv_values()  # returns a dict of key->value
 # number of times to run each container
-RUNS = 3
+RUNS = 100
 
 # fixed prompt and container image
 PROMPTS_PATH = Path(__file__).parent / "prompts.json"
@@ -27,7 +27,7 @@ else:
     # fallback if the file is empty / invalid
     PROMPTS = ["What is the weather forecast in London, UK?"]
 
-PROMPT_ID = 2
+PROMPT_ID = 11
 AGENT_TYPE = PROMPTS[PROMPT_ID][0]
 PROMPT = PROMPTS[PROMPT_ID][1] 
 IMAGE = "react-agent"
@@ -44,11 +44,11 @@ backends = {
     "gemini": {"env_key": "GEMINI_API_KEY", "flags": ["--backend=gemini"]},
     "deepseek": {"env_key": "DEEPSEEK_API_KEY", "flags": ["--backend=deepseek"]},
     "openai": {"env_key": "OPENAI_API_KEY", "flags": ["--backend=openai"]},
-    "ollama": {
-        "env_key": None,
-        "flags": ["--backend=ollama"],
-        "models": ["mistral", "llama3.1", "qwen3:8b"],
-    },
+    # "ollama": {
+    #     "env_key": None,
+    #     "flags": ["--backend=ollama"],
+    #     "models": ["mistral", "llama3.1", "qwen3:8b"],
+    # },
 }
 
 def _run_docker(backend_name: str, model_name: str, env_key: str | None = None, env_val: str | None = None, extra_flags: list | None = None):
@@ -59,8 +59,8 @@ def _run_docker(backend_name: str, model_name: str, env_key: str | None = None, 
         "docker",
         "run",
         "--rm",
-        "-v /etc/localtime:/etc/localtime:ro",
-        "-v /etc/timezone:/etc/timezone:ro",    
+        "-v", "/etc/localtime:/etc/localtime",
+        "-v", "/etc/timezone:/etc/timezone",    
         "-v",
         f"{PCAP_HOST_PATH}:/app/pcap",
         IMAGE,

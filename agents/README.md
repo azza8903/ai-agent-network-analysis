@@ -30,6 +30,20 @@ python react_agent.py --help
 ```
 for the list of features.
 
+### Agents
+
+There are two agents to choose from:
+- Weather agent, which retrieves the current weather information from the internet.
+- No-tools agent, which uses only the base knownledge in the model.
+- Research assistant agent.
+
+The research assistant agent requires access to SCOPUS database.  SCOPUS API requres a key, and is limited by IP address to the subscribed institutions. To check that you have access, try:
+
+```
+curl -X GET --header 'Accept: application/json' 'https://api.elsevier.com/content/abstract/doi/10.1016/S0014-5793(01)03313-0?apiKey=9e73d803d9c7f...0e4eeafd06'
+curl -X GET --header 'Accept: text/xml' 'https://api.elsevier.com/content/search/scopus?query=PUBYEAR+%3E+2018+AND+PUBYEAR+%3C+2020+AND%28TITLE%28heart+attack%29%29&view=complete&apiKey=9e73d803d...eeafd06'
+```
+
 ### Docker
 
 The agent will pick up all network trafic at the host, for as long as scapy is recording, including background e-mail activity etc.  It is therefore better to run from Docker:
@@ -47,9 +61,10 @@ To plot those plots you pass the pcap file and the client ip address
 
 For example
 ```
-python pcap_analysis.py ./pcap/react/openai-gpt-4o-mini-20251125-123406.pcap 10.47.9.55
+python pcap_analysis.py ./pcap/react/openai-gpt-4o-mini-20251125-123406.pcap --client-ip=10.47.9.55
 
 ```
+The client IP is used to make difference between the incoming and outgoing traffic, and the default is `172.17.0.2`, commonly used by Docker.
 
 ## Features
 

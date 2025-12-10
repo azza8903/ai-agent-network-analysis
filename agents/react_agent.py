@@ -332,6 +332,11 @@ def create_system_prompt(agent_type: str, tools) -> str:
         """
         #Provide final answers concisely when you have sufficient information
         #After each tool call, analyze the results before deciding next steps
+    elif agent_type == "no-tools":
+        system_prompt = """You are a helpful AI language model without access to any tools.
+        Answer the user's questions to the best of your ability based on your training data.
+        Do not mention tools or tool use, as you have none available.
+        """
     else:
         raise ValueError(f"Unsupported agent type: {agent_type}")
     #print("System prompt:", system_prompt)
@@ -343,6 +348,8 @@ def build_agent(llm, tools, agent_type: str, system_prompt):
         response_format=ToolStrategy(WeatherResponseFormat)
     elif agent_type == "research-assistant":
         response_format=ToolStrategy(SearchResponseFormat)
+    elif agent_type == "no-tools":
+        response_format=None
     else:
         raise ValueError(f"Unsupported agent type: {agent_type}")
     
@@ -362,8 +369,34 @@ def extract_final_ai_message(messages):
     """
     final_message = None
     for msg in reversed(messages):
-        if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
-            final_message = msg.content.strip()
+        if isinstance(msg, AIMessage) and msg.content:
+            # msg.content can be dictionary or string. If dict, try to extract meaningful text from the key "text". If string, strip
+            if isinstance(msg, dict):
+                content = msg.get("content")
+            else:
+                # Real LangChain AIMessage / HumanMessage objects
+                content = getattr(msg, "content", None)
+
+            # content inside an AIMessage may be:
+            # - a string
+            # - a list of blocks (dicts)
+            if isinstance(content, str):
+                # simple case
+                final_message = content
+            
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        final_message = block.get("text")
+            #     text = msg.content.get("text", "").strip()
+            #     if text:
+            #         final_message = text
+            #         break
+            # elif isinstance(msg.content, str):
+            #     if msg.content.strip():
+            #         final_message = msg.content.strip()
+            #         break
+            #final_message = msg.content.strip()
     return final_message  # or raise an error if desired
 
 # -----------------------------
@@ -380,7 +413,7 @@ def run_query(agent, prompt: str, max_execution_time: int) -> str:
 
     out = None
     try:
-        # This works on standard LangChain models like OpenAI/Gemini
+        # This works on standard LangChain models like OpenAI/Gemini, with structured output configured
         out = response["structured_response"] 
     except Exception as e:
         # Desperate fallback: try to extract the final AI message content
@@ -395,7 +428,7 @@ def main():
     parser = argparse.ArgumentParser(description="ReAct Agent — Reasoning and tool use")
     parser.add_argument("--agent", type=str, default="weather", 
                         help="Type of agent to run",
-                        choices=["weather", "research-assistant"])
+                        choices=["weather", "research-assistant", "no-tools"])
     parser.add_argument("--backend", type=str, default="openai",
                     choices=["openai", "gemini", "deepseek", "ollama"],
                     help="LLM backend")
@@ -415,17 +448,24 @@ def main():
             args.prompt = "What is the current weather in New York City, USA?"
     elif args.agent == "research-assistant":
         if not args.prompt:
-            args.prompt = "Retrieve three IoT papers with citations, which are published after 2022 and talk about privacy in smart homes. Explain."
+            args.prompt = "Retrieve three most influential papers, with citations, which are published after 2022 and talk about IoT privacy in smart homes. Explain your choice."
         # We normally use relatively modest models.  Research-assistant may need stronger ones.
         if not args.model:
             if args.backend == "openai":
-                args.model = "gpt-5"  # or "gpt-4o"
+                args.model = "gpt-5"
             elif args.backend == "gemini":
                 args.model = "gemini-2.5-pro"
             elif args.backend == "deepseek":
                 args.model = "deepseek-chat" # "deepseek-reasoner" does not support tool calling :(
             elif args.backend == "ollama":
                 args.model = "qwen3:32b"
+    elif args.agent == "no-tools":
+        if not args.prompt:
+            args.prompt = "Explain the theory of relativity in simple terms."
+
+    # args.agent = "no-tools"
+    # args.prompt = "Explain the theory of relativity in simple terms."
+    # args.backend = "gemini"
 
     # ---------- PCAP Capture ----------
     sniffer = None
@@ -452,7 +492,7 @@ def main():
 
     try:
         print("\n=== ReAct Agent Run ===")
-        print("Start Time:", datetime.now(timezone.utc).astimezone().isoformat())
+        print("Start Time:", datetime.now().astimezone().isoformat())
         print(f"Agent: {args.agent}")
         print(f"Prompt: {args.prompt}\n")
         print(f"Using backend: {args.backend}, model: {args.model or 'default'}, temperature: {args.temperature}")
@@ -461,7 +501,7 @@ def main():
         print("\n--- Agent Output ---\n")
         print(output)
         print("\n=== End of Run ===")
-        print("End Time:", datetime.now(timezone.utc).astimezone().isoformat()) 
+        print("End Time:", datetime.now().astimezone().isoformat()) 
         
     finally:
          # ---------- Stop & save PCAP ----------

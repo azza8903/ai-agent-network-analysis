@@ -1,10 +1,17 @@
-#from scapy.all import rdpcap, IP, IPv6, TCP, UDP
+# Top of the file: analysis/pcap_tools.py
+# The current version of this library uses both Scapy and Pyshark for different functionalities.
+
+from scapy.all import rdpcap, IP, IPv6, TCP, UDP
 import pyshark
 import ipaddress
 import nest_asyncio
 import pandas as pd
 import sys
 import requests
+from typing import Optional, List, Tuple
+import numpy as np
+
+PacketTuple = Tuple[float, int, int]
 
 
 # Apply nest_asyncio to the current event loop
@@ -44,7 +51,7 @@ def filter_local_traffic(df):
     return filtered_df
 
 def purify_traffic(pcap_df):
-    # Filter for TCP and QUIC traffic on ports 80 and 443
+    # Filter for TCP and QUIC traffic on ports 80 and 443, as well as 11434 for Ollama
     filtered_df = pcap_df[
         ((pcap_df['protocol'] == 'TCP') | (pcap_df['protocol'] == 'UDP') | (pcap_df['protocol'] == 'QUIC')) &
         ((pcap_df['source_port'].isin([80, 443, 11434])) | (pcap_df['destination_port'].isin([80, 443, 11434])))   
@@ -55,8 +62,8 @@ def analyze_pcap(pcap_file):
     pcap_df = pcap_to_dataframe(pcap_file)
     pcap_df = purify_traffic(pcap_df)
 
-    total_bytes_sent = pcap_df[pcap_df['destination_port'].isin([80, 443])]['length'].sum()
-    total_bytes_received = pcap_df[pcap_df['source_port'].isin([80, 443])]['length'].sum()
+    total_bytes_sent = pcap_df[pcap_df['destination_port'].isin([80, 443, 11434])]['length'].sum()
+    total_bytes_received = pcap_df[pcap_df['source_port'].isin([80, 443, 11434])]['length'].sum()
     latency_s = pcap_df['timestamp'].max()
     nr_streams = pcap_df['stream_index'].unique()
     
@@ -67,46 +74,101 @@ def analyze_pcap(pcap_file):
         "Latency (s)": round(latency_s, 2)
     }
 
+def pcap_to_trace_scapy(
+    pcap_path: str,
+    client_ip: str,
+    max_packets: Optional[int] = None,
+) -> List[PacketTuple]:
 
-# def analyze_pcap(pcap_file):
-#     packets = rdpcap(pcap_file)
-#     total_bytes_sent = 0
-#     total_bytes_received = 0
-#     external_requests = set()
-#     timestamps = []
+    print(f"Loading pcap: {pcap_path}")
+    pkts = rdpcap(pcap_path)
+    print(f"Total packets loaded: {len(pkts)}")
+    #print(f"Using client_ip = {client_ip}")
 
-#     for pkt in packets:
-#         if IP in pkt and TCP in pkt:
-#             ip_layer = pkt[IP]
-#             tcp_layer = pkt[TCP]
-#             packet_size = len(pkt)
+    trace = []
+    first_ts = None
+    matched = 0
+    processed = 0
 
-#             timestamps.append(pkt.time)
+    for i, pkt in enumerate(pkts):
+        if max_packets and processed >= max_packets:
+            break
+        processed += 1
 
-#             if tcp_layer.dport in [80, 443]:
-#                 total_bytes_sent += packet_size
-#                 external_requests.add(ip_layer.dst)
-#             elif tcp_layer.sport in [80, 443]:
-#                 total_bytes_received += packet_size
+        # Only IPv4/IPv6 packets
+        if IP in pkt:
+            src_ip = pkt[IP].src
+            dst_ip = pkt[IP].dst
+        elif IPv6 in pkt:
+            src_ip = pkt[IPv6].src
+            dst_ip = pkt[IPv6].dst
+        else:
+            continue
 
-#     latency_ms = 0
-#     if timestamps:
-#         latency_ms = (max(timestamps) - min(timestamps)) * 1000
+        # Direction is determined by the client IP
+        if src_ip == client_ip:
+            direction = +1
+        elif dst_ip == client_ip:
+            direction = -1
+        else:
+            continue  # not our flow
 
-#     return {
-#         "Bytes Sent (KB)": round(total_bytes_sent / 1024, 2),
-#         "Bytes Received (KB)": round(total_bytes_received / 1024, 2),
-#         "External Requests": len(external_requests),
-#         "Latency (ms)": round(latency_ms, 2)
-#     }
+        matched += 1
 
-def analyze_multiple_agents(pcap_files):
-    results = []
-    for agent_name, filepath in pcap_files.items():
-        stats = analyze_pcap(filepath)
-        stats["Agent"] = agent_name
-        results.append(stats)
-    return pd.DataFrame(results)
+        ts = float(pkt.time)
+        size_bytes = len(pkt)
+
+        if first_ts is None:
+            first_ts = ts
+
+        t_rel = ts - first_ts
+
+        trace.append((t_rel, direction, size_bytes))
+
+    #print(f"Processed packets: {processed}")
+    #print(f"Packets involving client_ip: {matched}")
+
+    return sorted(trace, key=lambda x: x[0])
+
+
+def build_mtam(
+    trace: List[PacketTuple],
+    window_size: float = 0.1,   # 100 ms
+    num_windows: int = 600,     # 60 seconds total
+    clip_to_num_windows: bool = True,
+) -> np.ndarray:
+    if not trace:
+        print("Warning: empty trace, returning zeros.")
+        return np.zeros((4, num_windows), dtype=np.float32)
+
+    last_t = trace[-1][0]
+    max_index = int(last_t // window_size)
+
+    if not clip_to_num_windows and max_index + 1 > num_windows:
+        num_windows = max_index + 1
+
+    N_in = np.zeros(num_windows, dtype=np.float32)
+    N_out = np.zeros(num_windows, dtype=np.float32)
+    B_in = np.zeros(num_windows, dtype=np.float32)
+    B_out = np.zeros(num_windows, dtype=np.float32)
+
+    for t_rel, direction, size_bytes in trace:
+        idx = int(t_rel // window_size)
+        if idx < 0 or idx >= num_windows:
+            if clip_to_num_windows:
+                continue
+            else:
+                continue
+
+        if direction == -1:
+            N_in[idx] += 1
+            B_in[idx] += size_bytes
+        elif direction == +1:
+            N_out[idx] += 1
+            B_out[idx] += size_bytes
+
+    mtam = np.stack([N_in, N_out, B_in, B_out], axis=0)
+    return mtam
 
 def pcap_to_dataframe(pcap_file):
     """

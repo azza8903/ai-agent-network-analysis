@@ -6,5 +6,9 @@
     ["research-assistant", "Find recent papers on AI ethics published after 2022."],
     ["research-assistant", "Search for articles about climate change impacts on agriculture."],
     ["research-assistant", "What are the three most seminal papers on quantum computing, published after 1990?"],
-    ["research-assistant", "What is the most cited publication on machine learning in healthcare?"]
+    ["research-assistant", "What is the most cited publication on machine learning in healthcare?"],
+    ["no-tools", "Tell me a joke about computers."],
+    ["no-tools", "Who won the FIFA World Cup in 2018?"],
+    ["no-tools", "What is the meaning of life?"],
+    ["no-tools", "Explain the theory of relativity in simple terms."]
 ]
