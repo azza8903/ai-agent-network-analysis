@@ -80,9 +80,9 @@ def pcap_to_trace_scapy(
     max_packets: Optional[int] = None,
 ) -> List[PacketTuple]:
 
-    print(f"Loading pcap: {pcap_path}")
+    #print(f"Loading pcap: {pcap_path}")
     pkts = rdpcap(pcap_path)
-    print(f"Total packets loaded: {len(pkts)}")
+    #print(f"Total packets loaded: {len(pkts)}")
     #print(f"Using client_ip = {client_ip}")
 
     trace = []
@@ -128,6 +128,9 @@ def pcap_to_trace_scapy(
     #print(f"Processed packets: {processed}")
     #print(f"Packets involving client_ip: {matched}")
 
+    if matched / len(pkts) < 0.8:
+        print(f"*** Warning: less than 80% of packets involve client_ip={client_ip!r} ({matched} out of {len(pkts)})")
+
     return sorted(trace, key=lambda x: x[0])
 
 
@@ -143,6 +146,9 @@ def build_mtam(
 
     last_t = trace[-1][0]
     max_index = int(last_t // window_size)
+
+    if max_index + 1 > num_windows:
+        print(f"*** Warning: trace length exceeds num_windows ({max_index + 1} > {num_windows})")
 
     if not clip_to_num_windows and max_index + 1 > num_windows:
         num_windows = max_index + 1
