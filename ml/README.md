@@ -11,4 +11,4 @@ Houses ML models, training scripts, data processing pipelines, and related utili
 - Test code
 
 ## Getting Started
-Run `../analysis/pcap2mtam.ipynb` to populate `../datasets`
+Run `../analysis/pcap2mtam.ipynb` to populate `./datasets` with numpy structures for training and test.  Then run `./train.py` and `./test.py`.
