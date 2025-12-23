@@ -36,7 +36,7 @@ def main(agent_type):
     test_results = []
     with torch.no_grad():
         for v, (x, y) in enumerate(test_loader):
-            x = x.reshape(1, 1, 4, 600)   # (N, C, H, W)
+            x = x.reshape(1, 1, 4, const.max_matrix_len)   # (N, C, H, W)
             defense_output = ml_model(x).cpu().squeeze().detach().numpy()
             pre = np.argmax(defense_output)
             test_results.append([y.item(), pre])
@@ -52,5 +52,5 @@ def main(agent_type):
 
 
 if __name__ == '__main__':
-    agent_type = "weather_agent"
+    agent_type = "no-tools_random"
     main(agent_type)

@@ -235,7 +235,7 @@ def main():
     args = parser.parse_args()
 
     #args.pcap = "experiments/pcap/run-ollama-models/ollama-mistral-20251203-101258.pcap"
-    args.pcap = "pcap/run_research_agent_100/deepseek-deepseek-chat-20251205-120944.pcap"
+    #args.pcap = "pcap/run_research_agent_100/deepseek-deepseek-chat-20251205-120944.pcap"
 
     debug_client_ip_matches(args.pcap, args.client_ip)
 

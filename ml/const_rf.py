@@ -9,8 +9,8 @@ UNMONITORED_SITE_NUM = 40000
 UNMONITORED_SITE_TRAINING = 900
 model_path = 'RF/pretrained/'
 
-num_classes = 100
-num_classes_ow = 96
+num_classes = 4
+num_classes_ow = 4
 # Length of TAM
 max_matrix_len = 1800
 # Maximum Load Time

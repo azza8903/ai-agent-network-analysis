@@ -10,9 +10,30 @@ import sys
 import requests
 from typing import Optional, List, Tuple
 import numpy as np
+import re
 
 PacketTuple = Tuple[float, int, int]
 
+CLIENT_IP = "172.17.0.2"
+BACKEND_CODES = {
+    "openai": 0,
+    "gemini": 1,
+    "deepseek": 2,
+    "ollama": 3,
+}
+# Helpers
+
+pcap_file_name_pattern = re.compile(r'^([^-\n]+)-(.+)-(\d{8}-\d{6})\.pcap$')
+
+def extract_agent_from_filename(filename):
+    m = pcap_file_name_pattern.match(filename)
+    if not m:
+        raise ValueError(f"Invalid filename format: {filename}")
+    value1, value2, value3 = m.groups()
+    return value1, value2, value3
+
+def get_code(backend):
+    return BACKEND_CODES.get(backend, -1)  # Return -1 for unknown backends
 
 # Apply nest_asyncio to the current event loop
 nest_asyncio.apply()
@@ -58,21 +79,11 @@ def purify_traffic(pcap_df):
     ]
     return filtered_df
 
-def analyze_pcap(pcap_file):
-    pcap_df = pcap_to_dataframe(pcap_file)
-    pcap_df = purify_traffic(pcap_df)
+###############################################
+#
+# Scapy-based pcap processing
 
-    total_bytes_sent = pcap_df[pcap_df['destination_port'].isin([80, 443, 11434])]['length'].sum()
-    total_bytes_received = pcap_df[pcap_df['source_port'].isin([80, 443, 11434])]['length'].sum()
-    latency_s = pcap_df['timestamp'].max()
-    nr_streams = pcap_df['stream_index'].unique()
-    
-    return {
-        "Bytes Sent (KB)": round(total_bytes_sent / 1024, 2),
-        "Bytes Received (KB)": round(total_bytes_received / 1024, 2),
-        "Streams": len(nr_streams),
-        "Latency (s)": round(latency_s, 2)
-    }
+################################################
 
 def pcap_to_trace_scapy(
     pcap_path: str,
@@ -176,12 +187,13 @@ def build_mtam(
     mtam = np.stack([N_in, N_out, B_in, B_out], axis=0)
     return mtam
 
-def pcap_to_dataframe(pcap_file):
+def pcap_to_dataframe(pcap_file, client_ip: str) -> pd.DataFrame:
     """
     Reads a pcap file and converts it into a pandas DataFrame.
     
     Args:
         pcap_file (str): The path to the pcap file.
+        client_ip (str): The IP address of the client to determine packet direction.
         
     Returns:
         pandas.DataFrame: A DataFrame containing packet information.
@@ -243,12 +255,21 @@ def pcap_to_dataframe(pcap_file):
                 src_ip = packet.ipv6.src
                 dst_ip = packet.ipv6.dst
             
+            # Direction is determined by the client IP
+            if src_ip == client_ip:
+                direction = "out"
+            elif dst_ip == client_ip:
+                direction = "in"
+            else:
+                continue  # not our flow
+
             if protocol:
                 # Append the extracted data to our list
                 packets_data.append({
                     'timestamp': timestamp,
                     'source_ip': src_ip,
                     'destination_ip': dst_ip,
+                    'direction': direction,
                     'protocol': protocol,
                     'length': packet.length,
                     'source_port': src_port,
@@ -287,3 +308,117 @@ def lookup_ip(ip):
         print ("Lookup failed at " + ip, file=sys.stderr)
         sys.stderr.write("Lookup failed at " + ip)
         return "", ""  # fallback if the request fails
+
+def analyze_multiple_agents(pcap_dict):
+# Expected input format: 
+#     {
+#     "Qwen": "../pcap/US-Iowa/Qwen_agent_traffic.pcap",
+#     "LLaMA 3": "../pcap//US-Iowa/llama3_agent_traffic.pcap",
+#     "DeepSeek": "../pcap//US-Iowa/deepseek_agent_traffic.pcap",
+#     "Gemini": "../pcap/genai/gemini-2.5-flash-20251023-090606.pcap"
+# }
+    results = []
+    for agent_name, pcap_file in pcap_dict.items():
+        analysis = analyze_pcap(pcap_file)
+        analysis["Agent"] = agent_name
+        results.append(analysis)
+    return pd.DataFrame(results)
+
+def analyze_pcap(pcap_file, client_ip: Optional[str] = CLIENT_IP) -> dict:
+    pcap_df = pcap_to_dataframe(pcap_file, client_ip=client_ip)
+    pcap_df = purify_traffic(pcap_df)
+
+    total_bytes_sent = pcap_df[pcap_df['direction'] == 'out']['length'].sum()
+    total_bytes_received = pcap_df[pcap_df['direction'] == 'in']['length'].sum()
+    latency_s = pcap_df['timestamp'].max()
+    nr_streams = pcap_df['stream_index'].unique()
+    
+    return {
+        "sent": round(total_bytes_sent / 1024, 2),
+        "received": round(total_bytes_received / 1024, 2),
+        "streams": len(nr_streams),
+        "latency": round(latency_s, 2)
+    }
+
+def burst_analysis(trace: List[PacketTuple], idle_threshold: float = 0.5) -> dict:
+    """
+    Analyzes bursts in the packet trace.
+
+    Args:
+        trace (List[PacketTuple]): List of packets as (timestamp, direction, size_bytes).
+        idle_threshold (float): Time in seconds to consider the end of a burst.
+    Returns:
+        dict: Analysis results including number of bursts, average burst size, and average burst duration.
+    """
+    if not trace:
+        return {
+            "num_bursts": 0,
+            "avg_burst_size": 0,
+            "avg_burst_duration": 0,
+        }
+
+    bursts = []
+    current_burst = []
+    last_timestamp = trace[0][0]
+
+    for pkt in trace:
+        timestamp, direction, size_bytes = pkt
+        if timestamp - last_timestamp > idle_threshold:
+            # End of current burst
+            if current_burst:
+                bursts.append(current_burst)
+                current_burst = []
+        current_burst.append(pkt)
+        last_timestamp = timestamp
+
+    # Add the last burst if it exists
+    if current_burst:
+        bursts.append(current_burst)
+
+    ret_bursts = []
+    n = 0
+    for b in bursts:
+        n += 1
+        burst_size = sum(pkt[2] for pkt in b)
+        burst_duration = b[-1][0] - b[0][0]
+        ret_bursts.append((burst_size, burst_duration))
+
+    num_bursts = len(bursts)
+    total_burst_size = sum(sum(pkt[2] for pkt in burst) for burst in bursts)
+    total_burst_duration = sum(burst[-1][0] - burst[0][0] for burst in bursts)
+
+    avg_burst_size = total_burst_size / num_bursts if num_bursts > 0 else 0
+    avg_burst_duration = total_burst_duration / num_bursts if num_bursts > 0 else 0
+
+    assert n == num_bursts
+    
+    return {
+        "num_bursts": num_bursts,
+        "avg_burst_size": round(avg_burst_size, 2),
+        "avg_burst_duration": round(avg_burst_duration, 2),
+        "bursts": ret_bursts,
+    }
+
+def window_bursts(mtam: np.ndarray) -> List[int]:
+    """
+    Analyzes bursts in the MTAM representation.
+
+    Args:
+        mtam (np.ndarray): MTAM array of shape (4, num_windows).
+        size_threshold (int): Minimum byte size to consider a window as part of a burst.
+    Returns:
+        List[int]: List of burst sizes in bytes.
+    """
+    B_in = mtam[2]
+    B_out = mtam[3]
+    total_bytes = B_in + B_out
+
+    bursts = []
+    current_burst_size = 0
+    in_burst = False
+
+    for byte_count in total_bytes:
+        if byte_count > 0:
+            bursts.append(int(byte_count))
+
+    return bursts

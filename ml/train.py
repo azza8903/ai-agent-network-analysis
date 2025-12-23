@@ -96,7 +96,7 @@ def control(feature_file):
 
 
 if __name__ == '__main__':
-    training_dataset = 'weather_agent_train'
+    training_dataset = 'no-tools_random_train'
     feature_file = f'ml/datasets/{training_dataset}.npy'
     method = training_dataset
     control(feature_file)
