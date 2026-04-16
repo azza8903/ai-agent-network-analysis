@@ -31,13 +31,16 @@ tool_call_counts = {}
 def _clean_city(s: str) -> str:
     s = unicodedata.normalize("NFKC", str(s))
     s = s.replace("“", '"').replace("”", '"').replace("’", "'")
-    s = re.sub(r'^[\s\'"]+|[\s\'"]+$', '', s)
-    s = re.sub(r'\s+', ' ', s).strip()
+    s = re.sub(r'^[\s\'"]+|[\s\'"]+$', "", s)
+    s = re.sub(r"\s+", " ", s).strip()
     s = s.replace(", UK", ", United Kingdom")
     s = s.replace(", U.K.", ", United Kingdom")
     return s
 
 
+# -----------------------------
+# Tools
+# -----------------------------
 @tool
 def weather_now(city: str) -> str:
     """Fetch current weather for a city using Open-Meteo (no API key)."""
@@ -79,6 +82,7 @@ def weather_now(city: str) -> str:
             },
             timeout=10,
         ).json()
+
         cur = wx.get("current") or {}
         t = cur.get("temperature_2m")
         w = cur.get("wind_speed_10m")
@@ -137,11 +141,15 @@ def scopus_search(
 
     try:
         api_key = os.getenv("SCOPUS_API_KEY")
+        if not api_key:
+            return "SCOPUS_API_KEY is not set."
+
         query = build_scopus_query(keywords, title, from_year, to_year)
         url = "https://api.elsevier.com/content/search/scopus"
         params = {"query": query, "apiKey": api_key, "count": 10}
         headers = {"Accept": "application/json"}
-        r = requests.get(url, params=params, headers=headers)
+
+        r = requests.get(url, params=params, headers=headers, timeout=30)
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -156,10 +164,14 @@ def scopus_get_abstract(doi: str):
 
     try:
         api_key = os.getenv("SCOPUS_API_KEY")
+        if not api_key:
+            return "SCOPUS_API_KEY is not set."
+
         url = f"https://api.elsevier.com/content/abstract/doi/{doi}"
         params = {"apiKey": api_key}
         headers = {"Accept": "application/json"}
-        r = requests.get(url, params=params, headers=headers)
+
+        r = requests.get(url, params=params, headers=headers, timeout=30)
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -167,13 +179,14 @@ def scopus_get_abstract(doi: str):
         return f"SCOPUS get_abstract error: {e}"
 
 
-def build_tools() -> List[Any]:
-    return [
-        weather_now,
-        get_local_city_by_ip,
-        scopus_search,
-        scopus_get_abstract,
-    ]
+def build_tools(agent_type: str) -> List[Any]:
+    if agent_type == "weather":
+        return [weather_now, get_local_city_by_ip]
+    if agent_type == "research-assistant":
+        return [scopus_search, scopus_get_abstract]
+    if agent_type == "no-tools":
+        return []
+    raise ValueError(f"Unsupported agent type: {agent_type}")
 
 
 # -----------------------------
@@ -188,6 +201,7 @@ class PlanStep:
 @dataclass
 class PlannerPlan:
     task_type: str
+    use_tools: bool
     steps: List[PlanStep]
     final_goal: str
 
@@ -212,7 +226,7 @@ def build_llm(
     backend: str,
     model: Optional[str] = None,
     temperature: float = 0.0,
-    max_execution_time: int = 60
+    max_execution_time: int = 60,
 ):
     backend = (backend or "openai").lower()
 
@@ -223,7 +237,7 @@ def build_llm(
         return ChatOpenAI(
             model=name,
             timeout=max_execution_time,
-            temperature=temperature
+            temperature=temperature,
         )
 
     elif backend == "gemini":
@@ -279,93 +293,188 @@ def build_llm(
             disable_streaming=True,
         )
 
-    else:
-        raise ValueError(f"Unsupported backend: {backend}")
+    raise ValueError(f"Unsupported backend: {backend}")
 
 
 # -----------------------------
 # Prompts
 # -----------------------------
-def create_planner_system_prompt() -> str:
-    return """
-You are the PLANNER agent in a planner-executor architecture.
+def create_planner_system_prompt(agent_type: str) -> str:
+    if agent_type == "weather":
+        return """
+You are the PLANNER agent in a planner-executor architecture for weather questions.
 
 Your responsibilities:
-- Understand the user's overall task.
+- Understand the user's task.
 - Break it into a short ordered list of executable steps.
-- Keep steps concrete and tool-oriented.
+- Decide whether tools are needed.
 - Do not execute tools yourself.
-- Do not solve the task directly.
 
 Rules:
-- Produce 1 to 4 steps only.
-- Prefer actionable steps over trivial ones.
-- Avoid unnecessary steps like merely restating the location unless location discovery is truly needed.
-- Each step must be self-contained and executable by another agent.
-- Use simple wording.
-- For weather tasks, prefer steps like: get weather, interpret weather, recommend activities.
-- For research tasks, prefer steps like: formulate search, search literature, inspect abstracts, summarize.
+- Produce 1 to 3 steps only.
+- Set use_tools=true.
+- Prefer actionable steps.
+- If the user asks for weather at my location, include a step to infer the local city first.
+- For weather tasks, prefer steps like:
+  1) identify location if needed
+  2) get current weather or forecast-related available weather data
+  3) interpret and answer the user clearly
 """.strip()
 
+    if agent_type == "research-assistant":
+        return """
+You are the PLANNER agent in a planner-executor architecture for literature search tasks.
 
-def create_executor_system_prompt(tools) -> str:
-    return f"""
-You are the EXECUTOR agent in a planner-executor architecture.
+Your responsibilities:
+- Understand the user's research request.
+- Break it into a short ordered list of executable steps.
+- Decide whether tools are needed.
+- Do not execute tools yourself.
+
+Rules:
+- Produce 2 to 4 steps only.
+- Set use_tools=true.
+- Prefer actionable steps.
+- Use the available SCOPUS-style search workflow when relevant.
+- Prefer steps like:
+  1) formulate the search focus
+  2) search the literature
+  3) inspect key results or abstracts if needed
+  4) summarize findings clearly
+""".strip()
+
+    if agent_type == "no-tools":
+        return """
+You are the PLANNER agent in a planner-executor architecture for general reasoning tasks.
+
+Your responsibilities:
+- Understand the user's task.
+- Break it into a short ordered list of executable steps.
+- Decide whether tools are needed.
+- Do not execute tools yourself.
+
+Rules:
+- Produce 1 to 3 steps only.
+- Set use_tools=false.
+- Prefer concise, useful steps.
+- For jokes, factual recall, explanations, or philosophical questions, use direct reasoning steps.
+- Do not create research or web-search steps for general knowledge prompts.
+""".strip()
+
+    raise ValueError(f"Unsupported agent type: {agent_type}")
+
+
+def create_executor_system_prompt(agent_type: str, tools: List[Any]) -> str:
+    if agent_type == "weather":
+        return f"""
+You are the EXECUTOR agent for weather tasks.
 
 Your responsibilities:
 - Execute exactly one assigned step.
 - Use tools when needed.
-- Use the completed step results provided in the prompt when relevant.
-- Return the result for that step only.
-- Do not redesign the overall workflow.
-- Do not claim you completed the full user task unless the assigned step explicitly asks for final synthesis.
+- Use completed step results when relevant.
+- Return only the result for the assigned step.
 
 Available tools:
 {tools}
 
 Rules:
-- Prefer tool use when factual lookup is needed.
-- Be concise but complete.
-- If a step depends on previous results, use them.
-- If a step cannot be completed, explain why.
+- Use weather_now or get_local_city_by_ip when appropriate.
+- If the location is already known from previous results, reuse it.
+- Be concise and factual.
 """.strip()
 
+    if agent_type == "research-assistant":
+        return f"""
+You are the EXECUTOR agent for research-assistant tasks.
 
-def create_synthesizer_system_prompt() -> str:
-    return """
-You are the FINAL SYNTHESIZER in a planner-executor architecture.
-You receive the user's original prompt plus the completed step results.
-Your job is to write the final answer for the user.
-Do not invent tool results that are not present in the execution notes.
-Be concise and directly answer the user's question.
+Your responsibilities:
+- Execute exactly one assigned step.
+- Use tools when needed.
+- Use completed step results when relevant.
+- Return only the result for the assigned step.
+
+Available tools:
+{tools}
+
+Rules:
+- Use SCOPUS tools when the step requires literature search or abstract retrieval.
+- Prefer a small number of well-justified results.
+- If the step is synthesis of already retrieved results, summarize directly.
+- Be concise but informative.
 """.strip()
+
+    if agent_type == "no-tools":
+        return """
+You are the EXECUTOR agent for no-tools tasks.
+
+Your responsibilities:
+- Execute exactly one assigned step.
+- Do not use external tools.
+- Use completed step results when relevant.
+- Return only the result for the assigned step.
+
+Rules:
+- Answer directly from general knowledge and reasoning.
+- Be concise and clear.
+- For factual recall questions, answer directly.
+- For explanations or philosophical questions, explain clearly without pretending to use external data.
+""".strip()
+
+    raise ValueError(f"Unsupported agent type: {agent_type}")
+
+
+def create_synthesizer_system_prompt(agent_type: str) -> str:
+    if agent_type == "weather":
+        return """
+You are the FINAL SYNTHESIZER for weather tasks.
+Use the planner output and execution notes to answer the user's question clearly.
+Do not invent tool results that are not present in the notes.
+""".strip()
+
+    if agent_type == "research-assistant":
+        return """
+You are the FINAL SYNTHESIZER for research-assistant tasks.
+Use the planner output and execution notes to answer the user's question clearly.
+When possible, summarize findings in a concise scholarly style.
+Do not invent citations or results that are not present in the notes.
+""".strip()
+
+    if agent_type == "no-tools":
+        return """
+You are the FINAL SYNTHESIZER for no-tools tasks.
+Use the planner output and execution notes to answer the user's question clearly and directly.
+Do not claim to have used tools or retrieved external data.
+""".strip()
+
+    raise ValueError(f"Unsupported agent type: {agent_type}")
 
 
 # -----------------------------
 # Agent builders
 # -----------------------------
-def build_planner_agent(llm):
+def build_planner_agent(llm, agent_type: str):
     return create_agent(
         model=llm,
-        system_prompt=create_planner_system_prompt(),
+        system_prompt=create_planner_system_prompt(agent_type),
         tools=[],
         response_format=ToolStrategy(PlannerPlan),
     )
 
 
-def build_executor_agent(llm, tools):
+def build_executor_agent(llm, agent_type: str, tools: List[Any]):
     return create_agent(
         model=llm,
-        system_prompt=create_executor_system_prompt(tools),
+        system_prompt=create_executor_system_prompt(agent_type, tools),
         tools=tools,
         response_format=ToolStrategy(ExecutorResult),
     )
 
 
-def build_synthesizer_agent(llm):
+def build_synthesizer_agent(llm, agent_type: str):
     return create_agent(
         model=llm,
-        system_prompt=create_synthesizer_system_prompt(),
+        system_prompt=create_synthesizer_system_prompt(agent_type),
         tools=[],
         response_format=ToolStrategy(FinalAnswer),
     )
@@ -403,7 +512,11 @@ def invoke_with_fallback(agent, prompt: str):
 
 
 def stringify_plan(plan: PlannerPlan) -> str:
-    lines = [f"Task type: {plan.task_type}", f"Final goal: {plan.final_goal}"]
+    lines = [
+        f"Task type: {plan.task_type}",
+        f"Use tools: {plan.use_tools}",
+        f"Final goal: {plan.final_goal}",
+    ]
     for step in plan.steps:
         lines.append(f"Step {step.id}: {step.description}")
     return "\n".join(lines)
@@ -423,7 +536,7 @@ def stringify_execution_results(results: List[ExecutorResult]) -> str:
 # -----------------------------
 # Planner-executor run
 # -----------------------------
-def run_planner_executor(planner, executor, synthesizer, prompt: str):
+def run_planner_executor(agent_type: str, planner, executor, synthesizer, prompt: str):
     plan = invoke_with_fallback(planner, prompt)
     if not isinstance(plan, PlannerPlan):
         raise RuntimeError(f"Planner did not return PlannerPlan. Got: {plan}")
@@ -437,6 +550,9 @@ def run_planner_executor(planner, executor, synthesizer, prompt: str):
         previous_results_text = stringify_execution_results(execution_results)
 
         executor_prompt = f"""
+Agent type:
+{agent_type}
+
 Original user task:
 {prompt}
 
@@ -473,6 +589,9 @@ Instructions:
         print(f"Result: {result.result}")
 
     synth_prompt = f"""
+Agent type:
+{agent_type}
+
 Original user task:
 {prompt}
 
@@ -497,13 +616,20 @@ Write the final answer to the user.
 def main():
     load_dotenv()
 
-    parser = argparse.ArgumentParser(description="Planner-Executor multi-agent demo")
+    parser = argparse.ArgumentParser(description="Planner-Executor multi-agent agent")
+    parser.add_argument(
+        "--agent",
+        type=str,
+        default="weather",
+        choices=["weather", "research-assistant", "no-tools"],
+        help="Type of task family to run",
+    )
     parser.add_argument(
         "--backend",
         type=str,
         default="openai",
         choices=["openai", "gemini", "deepseek", "ollama"],
-        help="LLM backend"
+        help="LLM backend",
     )
     parser.add_argument("--model", type=str, default=None)
     parser.add_argument("--prompt", type=str, default=None)
@@ -513,7 +639,12 @@ def main():
     args = parser.parse_args()
 
     if not args.prompt:
-        args.prompt = "What is the current weather in London, UK, and what activities do you recommend?"
+        if args.agent == "weather":
+            args.prompt = "What is the current weather in London, UK, and what activities do you recommend?"
+        elif args.agent == "research-assistant":
+            args.prompt = "Find recent papers on AI ethics published after 2022."
+        else:
+            args.prompt = "Explain the theory of relativity in simple terms."
 
     if not args.model:
         if args.backend == "openai":
@@ -540,7 +671,7 @@ def main():
         print(f"Failed to start packet capture: {e}")
         sniffer = None
 
-    tools = build_tools()
+    tools = build_tools(args.agent)
     llm = build_llm(
         backend=args.backend,
         model=args.model,
@@ -548,17 +679,18 @@ def main():
         max_execution_time=args.max_execution_time,
     )
 
-    planner = build_planner_agent(llm)
-    executor = build_executor_agent(llm, tools)
-    synthesizer = build_synthesizer_agent(llm)
+    planner = build_planner_agent(llm, args.agent)
+    executor = build_executor_agent(llm, args.agent, tools)
+    synthesizer = build_synthesizer_agent(llm, args.agent)
 
     try:
         print("\n=== Planner-Executor Agent Run ===")
         print("Start Time:", datetime.now().astimezone().isoformat())
+        print(f"Agent type: {args.agent}")
         print(f"Prompt: {args.prompt}\n")
         print(f"Using backend: {args.backend}, model: {args.model}, temperature: {args.temperature}")
 
-        output = run_planner_executor(planner, executor, synthesizer, args.prompt)
+        output = run_planner_executor(args.agent, planner, executor, synthesizer, args.prompt)
 
         print(f"\nQuery completed. Tool call counts: {tool_call_counts}")
         print("\n--- Final Output ---\n")
@@ -575,7 +707,11 @@ def main():
                 backend = getattr(args, "backend", "unknown")
                 model = args.model or "default"
                 safe_model = re.sub(r"[^A-Za-z0-9_.-]", "_", model)
-                pcap_filename = os.path.join(args.pcap_dir, f"{backend}-{safe_model}-{ts}.pcap")
+                safe_agent = re.sub(r"[^A-Za-z0-9_.-]", "_", args.agent)
+                pcap_filename = os.path.join(
+                    args.pcap_dir,
+                    f"{safe_agent}-{backend}-{safe_model}-{ts}.pcap",
+                )
                 scapy.wrpcap(pcap_filename, sniffer.results)
                 print(f"Packets saved to '{pcap_filename}'")
             except Exception as e:
