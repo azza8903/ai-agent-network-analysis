@@ -74,8 +74,7 @@ def _run_docker(backend_name: str, model_name: str, env_key: str | None = None, 
     if env_key and env_val:
         cmd[3:3] = ["-e", f"{env_key}={env_val}"]  # insert after "run" and "--rm"
 
-    if agent_type == "research-assistant":
-        cmd[3:3] = ["-e", f"SCOPUS_API_KEY={env_map.get('SCOPUS_API_KEY', '')}"] 
+    cmd[3:3] = ["-e", f"SCOPUS_API_KEY={env_map.get('SCOPUS_API_KEY', '')}"]
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
