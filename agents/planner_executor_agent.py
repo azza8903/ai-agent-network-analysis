@@ -5,7 +5,6 @@ import time
 from datetime import datetime
 from typing import Any, List, Optional
 from dataclasses import dataclass
-import json
 import re
 import unicodedata
 
@@ -14,10 +13,8 @@ import scapy.all as scapy
 from scapy.sendrecv import AsyncSniffer
 
 from langchain_openai import ChatOpenAI
-
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
-from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain.agents.structured_output import ToolStrategy
@@ -107,7 +104,6 @@ def get_local_city_by_ip() -> str:
         return f"IP location lookup error: {e}"
 
 
-
 def build_scopus_query(keywords, title, from_year, to_year):
     q = []
     if title:
@@ -171,7 +167,6 @@ def scopus_get_abstract(doi: str):
         return f"SCOPUS get_abstract error: {e}"
 
 
-
 def build_tools() -> List[Any]:
     return [
         weather_now,
@@ -213,14 +208,23 @@ class FinalAnswer:
 # -----------------------------
 # LLM Builder
 # -----------------------------
-def build_llm(backend: str, model: Optional[str] = None, temperature: float = 0.0, max_execution_time: int = 60):
+def build_llm(
+    backend: str,
+    model: Optional[str] = None,
+    temperature: float = 0.0,
+    max_execution_time: int = 60
+):
     backend = (backend or "openai").lower()
 
     if backend == "openai":
         name = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("OPENAI_API_KEY is not set.")
-        return ChatOpenAI(model=name, timeout=max_execution_time, temperature=temperature)
+        return ChatOpenAI(
+            model=name,
+            timeout=max_execution_time,
+            temperature=temperature
+        )
 
     elif backend == "gemini":
         name = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -285,6 +289,7 @@ def build_llm(backend: str, model: Optional[str] = None, temperature: float = 0.
 def create_planner_system_prompt() -> str:
     return """
 You are the PLANNER agent in a planner-executor architecture.
+
 Your responsibilities:
 - Understand the user's overall task.
 - Break it into a short ordered list of executable steps.
@@ -294,20 +299,23 @@ Your responsibilities:
 
 Rules:
 - Produce 1 to 4 steps only.
+- Prefer actionable steps over trivial ones.
+- Avoid unnecessary steps like merely restating the location unless location discovery is truly needed.
 - Each step must be self-contained and executable by another agent.
 - Use simple wording.
-- For weather tasks, typical steps are: identify location, get weather, interpret and recommend activities.
-- For research tasks, typical steps are: formulate search, search literature, inspect abstracts, summarize.
+- For weather tasks, prefer steps like: get weather, interpret weather, recommend activities.
+- For research tasks, prefer steps like: formulate search, search literature, inspect abstracts, summarize.
 """.strip()
-
 
 
 def create_executor_system_prompt(tools) -> str:
     return f"""
 You are the EXECUTOR agent in a planner-executor architecture.
+
 Your responsibilities:
 - Execute exactly one assigned step.
 - Use tools when needed.
+- Use the completed step results provided in the prompt when relevant.
 - Return the result for that step only.
 - Do not redesign the overall workflow.
 - Do not claim you completed the full user task unless the assigned step explicitly asks for final synthesis.
@@ -318,9 +326,9 @@ Available tools:
 Rules:
 - Prefer tool use when factual lookup is needed.
 - Be concise but complete.
+- If a step depends on previous results, use them.
 - If a step cannot be completed, explain why.
 """.strip()
-
 
 
 def create_synthesizer_system_prompt() -> str:
@@ -345,7 +353,6 @@ def build_planner_agent(llm):
     )
 
 
-
 def build_executor_agent(llm, tools):
     return create_agent(
         model=llm,
@@ -353,7 +360,6 @@ def build_executor_agent(llm, tools):
         tools=tools,
         response_format=ToolStrategy(ExecutorResult),
     )
-
 
 
 def build_synthesizer_agent(llm):
@@ -388,7 +394,6 @@ def extract_final_ai_message(messages):
     return final_message
 
 
-
 def invoke_with_fallback(agent, prompt: str):
     response = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
     try:
@@ -397,11 +402,21 @@ def invoke_with_fallback(agent, prompt: str):
         return extract_final_ai_message(response.get("messages", [])) or str(response)
 
 
-
 def stringify_plan(plan: PlannerPlan) -> str:
     lines = [f"Task type: {plan.task_type}", f"Final goal: {plan.final_goal}"]
     for step in plan.steps:
         lines.append(f"Step {step.id}: {step.description}")
+    return "\n".join(lines)
+
+
+def stringify_execution_results(results: List[ExecutorResult]) -> str:
+    if not results:
+        return "None"
+    lines = []
+    for item in results:
+        lines.append(
+            f"Step {item.step_id} ({item.step_description}) -> [{item.status}] {item.result}"
+        )
     return "\n".join(lines)
 
 
@@ -419,6 +434,8 @@ def run_planner_executor(planner, executor, synthesizer, prompt: str):
     execution_results: List[ExecutorResult] = []
 
     for step in plan.steps:
+        previous_results_text = stringify_execution_results(execution_results)
+
         executor_prompt = f"""
 Original user task:
 {prompt}
@@ -426,13 +443,20 @@ Original user task:
 Overall plan:
 {stringify_plan(plan)}
 
+Completed step results so far:
+{previous_results_text}
+
 Assigned step:
 Step {step.id}: {step.description}
 
-Execute only this step and return the result.
+Instructions:
+- Use the completed step results when relevant.
+- Execute only this step.
+- Return the result for this step only.
 """.strip()
 
         result = invoke_with_fallback(executor, executor_prompt)
+
         if not isinstance(result, ExecutorResult):
             result = ExecutorResult(
                 step_id=step.id,
@@ -442,16 +466,11 @@ Execute only this step and return the result.
             )
 
         execution_results.append(result)
+
         print("\n--- Executor Output ---\n")
         print(f"Step {result.step_id}: {result.step_description}")
         print(f"Status: {result.status}")
         print(f"Result: {result.result}")
-
-    notes = []
-    for item in execution_results:
-        notes.append(
-            f"Step {item.step_id} ({item.step_description}) -> [{item.status}] {item.result}"
-        )
 
     synth_prompt = f"""
 Original user task:
@@ -461,7 +480,7 @@ Planner output:
 {stringify_plan(plan)}
 
 Execution notes:
-{chr(10).join(notes)}
+{stringify_execution_results(execution_results)}
 
 Write the final answer to the user.
 """.strip()
@@ -479,7 +498,13 @@ def main():
     load_dotenv()
 
     parser = argparse.ArgumentParser(description="Planner-Executor multi-agent demo")
-    parser.add_argument("--backend", type=str, default="openai", choices=["openai", "gemini", "deepseek", "ollama"], help="LLM backend")
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default="openai",
+        choices=["openai", "gemini", "deepseek", "ollama"],
+        help="LLM backend"
+    )
     parser.add_argument("--model", type=str, default=None)
     parser.add_argument("--prompt", type=str, default=None)
     parser.add_argument("--temperature", type=float, default=0.0)
@@ -499,9 +524,10 @@ def main():
             args.model = "deepseek-chat"
         elif args.backend == "ollama":
             args.model = "llama3.1"
-# -----------------------------
-# PCAP Capture
-# -----------------------------
+
+    # -----------------------------
+    # PCAP Capture
+    # -----------------------------
     sniffer = None
     os.makedirs(args.pcap_dir, exist_ok=True)
     print("\nStarting packet capture (may require sudo/root)...")
