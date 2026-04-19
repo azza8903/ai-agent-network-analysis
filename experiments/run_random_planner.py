@@ -54,7 +54,7 @@ def _run_docker(backend_name: str, model_name: str, env_key: str | None = None, 
     # Assign a random value between 0..len(PROMPTS)-1 to prompt_id
     prompt_id = os.urandom(1)[0] % len(PROMPTS)
     prompt = PROMPTS[prompt_id][1]
-    agent_type = "research-assistant"
+    agent_type = PROMPTS[prompt_id][0]
 
     # build base command
     cmd = [
