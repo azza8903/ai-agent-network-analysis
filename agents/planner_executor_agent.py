@@ -648,9 +648,9 @@ def main():
 
     if not args.model:
         if args.backend == "openai":
-            args.model = "gpt-4o-mini"
+            args.model = "gpt-5"
         elif args.backend == "gemini":
-            args.model = "gemini-2.5-flash"
+            args.model = "gemini-2.5-pro"
         elif args.backend == "deepseek":
             args.model = "deepseek-chat"
         elif args.backend == "ollama":
