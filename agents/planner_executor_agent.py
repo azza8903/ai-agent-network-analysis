@@ -504,7 +504,14 @@ def extract_final_ai_message(messages):
 
 
 def invoke_with_fallback(agent, prompt: str):
-    response = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+    try:
+        response = agent.invoke(
+            {"messages": [{"role": "user", "content": prompt}]},
+            config={"recursion_limit": 50}
+        )
+    except Exception as e:
+        return f"Agent execution failed: {e}"
+
     try:
         return response["structured_response"]
     except Exception:
