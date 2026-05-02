@@ -7,6 +7,7 @@ ReAct Agent — clean compatibility build with Google Search + live weather
 """
 
 import argparse
+import concurrent.futures
 import os
 import time
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ from langchain.tools import tool
 from dataclasses import dataclass
 from langchain.agents.structured_output import ToolStrategy
 from langchain_core.messages import AIMessage
+from langgraph.errors import GraphRecursionError
 
 import scapy.all as scapy
 from scapy.sendrecv import AsyncSniffer
@@ -402,23 +404,39 @@ def extract_final_ai_message(messages):
 # -----------------------------
 # Execution
 # -----------------------------
-def run_query(agent, prompt: str, max_execution_time: int) -> str:
-    _config = {
-    "timeout": str(max_execution_time),  # Timeout in seconds
-}
-    response = agent.invoke(
-        {"messages": [{"role": "user", "content": prompt}]},
-        #config=_config,
-    )
+def run_query(agent, prompt: str, max_execution_time: int, max_recursion: int) -> str:
+    config = {"recursion_limit": max_recursion}
 
-    out = None
+    def _invoke():
+        last_state = None
+        try:
+            for state in agent.stream(
+                {"messages": [{"role": "user", "content": prompt}]},
+                config=config,
+                stream_mode="values",
+            ):
+                last_state = state
+        except GraphRecursionError:
+            pass  # last_state holds the most recent complete state
+        return last_state
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_invoke)
+        try:
+            response = future.result(timeout=max_execution_time)
+        except concurrent.futures.TimeoutError:
+            return f"Agent stopped: wall-clock limit of {max_execution_time}s exceeded."
+
+    if response is None:
+        return "Agent produced no output."
+
     try:
-        # This works on standard LangChain models like OpenAI/Gemini, with structured output configured
-        out = response["structured_response"] 
-    except Exception as e:
-        # Desperate fallback: try to extract the final AI message content
-        out = str(extract_final_ai_message(response.get("messages", []))) or str(response)
-    return out
+        return response["structured_response"]
+    except (KeyError, TypeError):
+        partial = extract_final_ai_message(response.get("messages", []))
+        if partial:
+            return f"[Recursion limit reached — partial result]\n\n{partial}"
+        return "Agent stopped: recursion limit reached, no partial result available."
 
 # -----------------------------
 # CLI
@@ -435,7 +453,10 @@ def main():
     parser.add_argument("--model", type=str, default=None)
     parser.add_argument("--prompt", type=str, default=None)
     parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--max-execution-time", type=int, default=60)
+    parser.add_argument("--max-execution-time", type=int, default=900,
+                        help="Wall-clock timeout for the entire agent run (seconds)")
+    parser.add_argument("--max-recursion", type=int, default=100,
+                        help="Maximum LangGraph steps (think/act cycles)")
     parser.add_argument("--pcap-dir", type=str, default=PCAP_DIR, help="Directory to save PCAP files")
     parser.add_argument("--no-wikipedia", action="store_true")
     parser.add_argument("--ddg", action="store_true")
@@ -496,7 +517,7 @@ def main():
         print(f"Agent: {args.agent}")
         print(f"Prompt: {args.prompt}\n")
         print(f"Using backend: {args.backend}, model: {args.model or 'default'}, temperature: {args.temperature}")
-        output = run_query(agent, args.prompt, args.max_execution_time)
+        output = run_query(agent, args.prompt, args.max_execution_time, args.max_recursion)
         print(f"Query completed. Tool call counts: {tool_call_counts}")
         print("\n--- Agent Output ---\n")
         print(output)
